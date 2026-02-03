@@ -136,6 +136,10 @@ class BCVScraper {
             let cleaned = rateText.replace(/,/g, '.').replace(/\s/g, '');
             // Remove any non-numeric characters except dot and minus
             cleaned = cleaned.replace(/[^\d.-]/g, '');
+            // Validate format: optional leading '-', digits, optional single '.' with following digits
+            if (!/^-?\d+(\.\d+)?$/.test(cleaned)) {
+                return null;
+            }
             const rate = parseFloat(cleaned);
             return isNaN(rate) ? null : rate;
         } catch (error) {
