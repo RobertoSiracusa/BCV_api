@@ -156,12 +156,18 @@ class BCVScraper {
             $cleaned = str_replace(' ', '', $cleaned);
             // Remove any non-numeric characters except dot and minus
             $cleaned = preg_replace('/[^\d.-]/', '', $cleaned);
-            
-            if (empty($cleaned)) {
+
+            // If nothing remains after cleaning, treat as invalid
+            if ($cleaned === '') {
                 return null;
             }
-            
-            $rate = floatval($cleaned);
+
+            // Ensure the cleaned value is a valid numeric representation
+            if (!is_numeric($cleaned)) {
+                return null;
+            }
+
+            $rate = (float) $cleaned;
             return $rate;
         } catch (Exception $e) {
             return null;
