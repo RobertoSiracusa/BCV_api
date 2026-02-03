@@ -123,7 +123,26 @@ class BCVScraper:
             cleaned = rate_text.replace(',', '.').replace(' ', '')
             # Remove any non-numeric characters except dot and minus
             cleaned = ''.join(c for c in cleaned if c.isdigit() or c in '.-')
-            return float(cleaned) if cleaned else None
+
+            # If nothing remains after cleaning, treat as no rate
+            if not cleaned:
+                return None
+
+            # Validate minus sign usage: at most one, and only at the beginning
+            if cleaned.count('-') > 1:
+                return None
+            if '-' in cleaned and not cleaned.startswith('-'):
+                return None
+
+            # Validate decimal point usage: at most one
+            if cleaned.count('.') > 1:
+                return None
+
+            # Ensure there is at least one digit
+            if not any(ch.isdigit() for ch in cleaned):
+                return None
+
+            return float(cleaned)
         except ValueError:
             return None
     
