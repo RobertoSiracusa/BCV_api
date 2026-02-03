@@ -79,13 +79,7 @@ class BCVScraper:
         }
         
         # Try to find exchange rates in the common BCV structure
-        # Pattern 1: Look for divs with currency information
-        currency_divs = soup.find_all(['div', 'span', 'strong'], 
-                                       class_=lambda x: x and ('moneda' in x.lower() or 
-                                                              'currency' in x.lower() or
-                                                              'tasa' in x.lower()))
-        
-        # Pattern 2: Look for tables with exchange rate data
+        # Currently implemented: look for tables with exchange rate data
         tables = soup.find_all('table')
         for table in tables:
             rows = table.find_all('tr')
