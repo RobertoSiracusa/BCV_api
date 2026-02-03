@@ -1,4 +1,3 @@
-#!/usr/bin/env ts-node
 /**
  * BCV API - Web scraping for Venezuelan Central Bank exchange rates
  * Retrieves exchange rates for USD, EUR, Yuan, Turkish Lira, and Russian Ruble
