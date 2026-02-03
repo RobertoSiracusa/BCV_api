@@ -5,7 +5,7 @@
   "main": "bcv_api.js",
   "scripts": {
     "start": "node bcv_api.js",
-    "start:ts": "ts-node bcv_api.ts",
+    "start:ts": "ts-node src/bcv_api.ts",
     "build": "tsc",
     "test": "node bcv_api.js"
   },

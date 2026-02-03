@@ -43,3 +43,6 @@ htmlcov/
 tmp/
 temp/
 *.tmp
+
+# Keep source TypeScript separate
+# TypeScript source is in src/ and compiles to dist/

@@ -91,14 +91,14 @@ tsc
 
 #### Usage
 ```bash
-ts-node bcv_api.ts
+npm run start:ts
 # or after compilation:
 node dist/bcv_api.js
 ```
 
 Or import as a module:
 ```typescript
-import BCVScraper from './bcv_api';
+import BCVScraper from './src/bcv_api';
 
 const scraper = new BCVScraper();
 scraper.getExchangeRates().then(data => {
