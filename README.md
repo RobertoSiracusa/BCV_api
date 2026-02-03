@@ -81,7 +81,7 @@ scraper.getExchangeRates().then(data => {
 #### Installation
 ```bash
 npm install
-npm install -g typescript ts-node @types/node
+npm install --save-dev typescript ts-node @types/node
 ```
 
 #### Compile
