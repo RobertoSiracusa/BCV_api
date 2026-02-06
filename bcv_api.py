@@ -14,11 +14,13 @@ from typing import Dict, Optional
 class BCVScraper:
     """Scraper for BCV (Banco Central de Venezuela) exchange rates"""
     
-    def __init__(self):
+    def __init__(self) -> None:
         self.base_url = "https://www.bcv.org.ve/"
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
         
     def get_exchange_rates(self) -> Dict:
         """
@@ -28,7 +30,7 @@ class BCVScraper:
             dict: Exchange rates in JSON format
         """
         try:
-            response = requests.get(self.base_url, headers=self.headers, timeout=10)
+            response = self.session.get(self.base_url, timeout=10)
             response.raise_for_status()
             
             soup = BeautifulSoup(response.content, 'html.parser')
@@ -68,16 +70,6 @@ class BCVScraper:
         """
         rates = {}
         
-        # BCV typically shows rates in a specific div or table
-        # Common selectors used by BCV website
-        currency_map = {
-            'Dólar': 'USD',
-            'Euro': 'EUR',
-            'Yuan': 'CNY',
-            'Lira': 'TRY',
-            'Rublo': 'RUB'
-        }
-        
         # Try to find exchange rates in the common BCV structure
         # Currently implemented: look for tables with exchange rate data
         tables = soup.find_all('table')
@@ -87,32 +79,33 @@ class BCVScraper:
                 cells = row.find_all(['td', 'th'])
                 if len(cells) >= 2:
                     currency_text = cells[0].get_text(strip=True)
-                    for key, code in currency_map.items():
-                        if key in currency_text:
-                            try:
-                                rate_text = cells[1].get_text(strip=True)
-                                # Clean and convert the rate
-                                rate = self._clean_rate(rate_text)
-                                if rate:
-                                    rates[code] = {
-                                        "currency": code,
-                                        "name": key,
-                                        "rate": rate,
-                                        "symbol": self._get_currency_symbol(code)
-                                    }
-                            except (ValueError, IndexError):
-                                continue
+                    # Directly check for Dólar
+                    if 'Dólar' in currency_text:
+                        try:
+                            rate_text = cells[1].get_text(strip=True)
+                            # Clean and convert the rate
+                            rate = self._clean_rate(rate_text)
+                            if rate:
+                                rates['USD'] = {
+                                    "currency": 'USD',
+                                    "name": 'Dólar',
+                                    "rate": rate,
+                                    "symbol": '$'
+                                }
+                                # Found what we needed, return immediately or break
+                                return rates
+                        except (ValueError, IndexError):
+                            continue
         
-        # If no rates found, add placeholder structure
-        if not rates:
-            for name, code in currency_map.items():
-                rates[code] = {
-                    "currency": code,
-                    "name": name,
-                    "rate": None,
-                    "symbol": self._get_currency_symbol(code),
-                    "note": "Rate not available - check BCV website"
-                }
+        # If USD not found, add placeholder
+        if 'USD' not in rates:
+            rates['USD'] = {
+                "currency": 'USD',
+                "name": 'Dólar',
+                "rate": None,
+                "symbol": '$',
+                "note": "Rate not available - check BCV website"
+            }
         
         return rates
     

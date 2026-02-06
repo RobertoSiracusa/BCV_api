@@ -1,10 +1,17 @@
 /**
  * BCV API - Web scraping for Venezuelan Central Bank exchange rates
- * Retrieves exchange rates for USD, EUR, Yuan, Turkish Lira, and Russian Ruble
+ * Retrieves exchange rates for USD only (Optimized)
  */
 
-import axios, { AxiosResponse } from 'axios';
+import axios from 'axios';
 import * as cheerio from 'cheerio';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as https from 'https';
+
+const agent = new https.Agent({
+    rejectUnauthorized: false
+});
 
 interface CurrencyRate {
     currency: string;
@@ -18,19 +25,25 @@ interface ExchangeRatesResponse {
     status: string;
     timestamp: string;
     source?: string;
-    rates?: { [key: string]: CurrencyRate };
+    rates?: { [key: string]: CurrencyRate } | null;
     message?: string;
+    cached?: boolean;
+    stale?: boolean;
 }
 
 class BCVScraper {
     private baseUrl: string;
     private headers: { [key: string]: string };
+    private cacheFile: string;
+    private cacheTime: number;
 
     constructor() {
         this.baseUrl = 'https://www.bcv.org.ve/';
         this.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         };
+        this.cacheFile = path.join(__dirname, '..', 'bcv_rate_cache_ts.json');
+        this.cacheTime = 3600 * 1000; // 1 hour
     }
 
     /**
@@ -38,23 +51,63 @@ class BCVScraper {
      * @returns {Promise<ExchangeRatesResponse>} Exchange rates in JSON format
      */
     async getExchangeRates(): Promise<ExchangeRatesResponse> {
-        try {
-            const response: AxiosResponse = await axios.get(this.baseUrl, {
-                headers: this.headers,
-                timeout: 10000
-            });
+        // Check cache first
+        if (fs.existsSync(this.cacheFile)) {
+            const stats = fs.statSync(this.cacheFile);
+            if (Date.now() - stats.mtimeMs < this.cacheTime) {
+                try {
+                    const cachedData = JSON.parse(fs.readFileSync(this.cacheFile, 'utf8'));
+                    if (cachedData && cachedData.status === 'success') {
+                        cachedData.cached = true;
+                        return cachedData as ExchangeRatesResponse;
+                    }
+                } catch (e) {
+                    // Ignore cache read errors
+                }
+            }
+        }
 
-            const $ = cheerio.load(response.data);
+        try {
+            const config: any = {
+                headers: this.headers,
+                timeout: 10000,
+                decompress: true,
+                httpsAgent: agent
+            };
+
+            const response = await axios.get(this.baseUrl, config);
+
+            // Correct type for Cheerio load
+            const $ = cheerio.load(response.data as string);
             const rates = this.parseRates($);
 
-            return {
+            const data: ExchangeRatesResponse = {
                 status: 'success',
                 timestamp: new Date().toISOString(),
                 source: 'BCV (Banco Central de Venezuela)',
                 rates: rates
             };
 
+            // Save to cache
+            fs.writeFileSync(this.cacheFile, JSON.stringify(data));
+
+            return data;
+
         } catch (error: any) {
+            // Try to return stale cache on error
+            if (fs.existsSync(this.cacheFile)) {
+                try {
+                    const cachedData = JSON.parse(fs.readFileSync(this.cacheFile, 'utf8'));
+                    if (cachedData) {
+                        cachedData.cached = true;
+                        cachedData.stale = true;
+                        return cachedData as ExchangeRatesResponse;
+                    }
+                } catch (e) {
+                    // Ignore
+                }
+            }
+
             return {
                 status: 'error',
                 message: `Failed to fetch data from BCV: ${error.message}`,
@@ -68,57 +121,54 @@ class BCVScraper {
      * @param {cheerio.CheerioAPI} $ - Cheerio instance with loaded HTML
      * @returns {Object} Parsed exchange rates
      */
-    private parseRates($: cheerio.CheerioAPI): { [key: string]: CurrencyRate } {
+    private parseRates($: any): { [key: string]: CurrencyRate } {
         const rates: { [key: string]: CurrencyRate } = {};
-        const currencyMap: { [key: string]: string } = {
-            'Dólar': 'USD',
-            'Euro': 'EUR',
-            'Yuan': 'CNY',
-            'Lira': 'TRY',
-            'Rublo': 'RUB'
-        };
 
-        // Try to find exchange rates in tables
-        $('table').each((_, table) => {
-            $(table).find('tr').each((_, row) => {
-                const cells = $(row).find('td, th');
+        // Try to find exchange rates in tables using optimized traversal
+        const tables = $('table');
+
+        for (let i = 0; i < tables.length; i++) {
+            const rows = $(tables[i]).find('tr');
+
+            for (let j = 0; j < rows.length; j++) {
+                const cells = $(rows[j]).find('td, th');
+
                 if (cells.length >= 2) {
                     const currencyText = $(cells[0]).text().trim();
-                    
-                    for (const [key, code] of Object.entries(currencyMap)) {
-                        if (currencyText.includes(key)) {
-                            try {
-                                const rateText = $(cells[1]).text().trim();
-                                const rate = this.cleanRate(rateText);
-                                
-                                if (rate !== null) {
-                                    rates[code] = {
-                                        currency: code,
-                                        name: key,
-                                        rate: rate,
-                                        symbol: this.getCurrencySymbol(code)
-                                    };
-                                }
-                            } catch (error) {
-                                // Continue to next currency
+
+                    // Optimized: Check directly for Dólar
+                    if (currencyText.includes('Dólar')) {
+                        try {
+                            const rateText = $(cells[1]).text().trim();
+                            const rate = this.cleanRate(rateText);
+
+                            if (rate !== null) {
+                                rates['USD'] = {
+                                    currency: 'USD',
+                                    name: 'Dólar',
+                                    rate: rate,
+                                    symbol: '$'
+                                };
+                                // Found USD, return immediately
+                                return rates;
                             }
+                        } catch (error) {
+                            continue;
                         }
                     }
                 }
-            });
-        });
-
-        // If no rates found, add placeholder structure
-        if (Object.keys(rates).length === 0) {
-            for (const [name, code] of Object.entries(currencyMap)) {
-                rates[code] = {
-                    currency: code,
-                    name: name,
-                    rate: null,
-                    symbol: this.getCurrencySymbol(code),
-                    note: 'Rate not available - check BCV website'
-                };
             }
+        }
+
+        // If USD not found, add placeholder structure
+        if (!rates['USD']) {
+            rates['USD'] = {
+                currency: 'USD',
+                name: 'Dólar',
+                rate: null,
+                symbol: '$',
+                note: 'Rate not available - check BCV website'
+            };
         }
 
         return rates;
@@ -133,33 +183,15 @@ class BCVScraper {
         try {
             // Remove currency symbols, spaces, and convert comma to dot
             let cleaned = rateText.replace(/,/g, '.').replace(/\s/g, '');
-            // Remove any non-numeric characters except dot and minus
+            // Strict cleanup
             cleaned = cleaned.replace(/[^\d.-]/g, '');
-            // Validate format: optional leading '-', digits, optional single '.' with following digits
-            if (!/^-?\d+(\.\d+)?$/.test(cleaned)) {
-                return null;
-            }
-            const rate = parseFloat(cleaned);
-            return isNaN(rate) ? null : rate;
+
+            if (!cleaned || isNaN(Number(cleaned))) return null;
+
+            return parseFloat(cleaned);
         } catch (error) {
             return null;
         }
-    }
-
-    /**
-     * Get currency symbol for a given currency code
-     * @param {string} code - Currency code
-     * @returns {string} Currency symbol
-     */
-    private getCurrencySymbol(code: string): string {
-        const symbols: { [key: string]: string } = {
-            'USD': '$',
-            'EUR': '€',
-            'CNY': '¥',
-            'TRY': '₺',
-            'RUB': '₽'
-        };
-        return symbols[code] || '';
     }
 }
 

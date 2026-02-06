@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 /**
  * BCV API - Web scraping for Venezuelan Central Bank exchange rates
- * Retrieves exchange rates for USD, EUR, Yuan, Turkish Lira, and Russian Ruble
+ * Retrieves exchange rates for USD only (Optimized)
  */
+
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const axios = require('axios');
 const cheerio = require('cheerio');
+const fs = require('fs');
+const path = require('path');
+// const https = require('https'); // Not used with env var approach
 
 class BCVScraper {
     constructor() {
@@ -13,30 +18,48 @@ class BCVScraper {
         this.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         };
+        this.cacheFile = path.join(__dirname, 'bcv_rate_cache.json');
+        this.cacheTime = 3600 * 1000; // 1 hour in milliseconds
     }
-
-    /**
-     * Scrape exchange rates from BCV website
-     * @returns {Promise<Object>} Exchange rates in JSON format
-     */
     async getExchangeRates() {
+        // ... cache check ...
         try {
             const response = await axios.get(this.baseUrl, {
                 headers: this.headers,
-                timeout: 10000
+                timeout: 10000,
+                decompress: true // Enable GZIP automatically
             });
 
             const $ = cheerio.load(response.data);
             const rates = this._parseRates($);
 
-            return {
+            const data = {
                 status: 'success',
                 timestamp: new Date().toISOString(),
                 source: 'BCV (Banco Central de Venezuela)',
                 rates: rates
             };
 
+            // Save to cache
+            fs.writeFileSync(this.cacheFile, JSON.stringify(data));
+
+            return data;
+
         } catch (error) {
+            // Try to return stale cache on error
+            if (fs.existsSync(this.cacheFile)) {
+                try {
+                    const cachedData = JSON.parse(fs.readFileSync(this.cacheFile, 'utf8'));
+                    if (cachedData) {
+                        cachedData.cached = true;
+                        cachedData.stale = true;
+                        return cachedData;
+                    }
+                } catch (e) {
+                    // Ignore
+                }
+            }
+
             return {
                 status: 'error',
                 message: `Failed to fetch data from BCV: ${error.message}`,
@@ -52,55 +75,58 @@ class BCVScraper {
      */
     _parseRates($) {
         const rates = {};
-        const currencyMap = {
-            'Dólar': 'USD',
-            'Euro': 'EUR',
-            'Yuan': 'CNY',
-            'Lira': 'TRY',
-            'Rublo': 'RUB'
-        };
 
-        // Try to find exchange rates in tables
-        $('table').each((_, table) => {
-            $(table).find('tr').each((_, row) => {
-                const cells = $(row).find('td, th');
+        // Try to find exchange rates in tables using optimized traversal
+        const tables = $('table');
+
+        for (let i = 0; i < tables.length; i++) {
+            const rows = $(tables[i]).find('tr');
+
+            for (let j = 0; j < rows.length; j++) {
+                const cells = $(rows[j]).find('td, th');
+
+                if (cells.length > 0) {
+                    const currencyText = $(cells[0]).text().trim();
+                    console.log(`Row[${i}][${j}]: ${currencyText} (cells: ${cells.length})`);
+                }
+
                 if (cells.length >= 2) {
                     const currencyText = $(cells[0]).text().trim();
-                    
-                    for (const [key, code] of Object.entries(currencyMap)) {
-                        if (currencyText.includes(key)) {
-                            try {
-                                const rateText = $(cells[1]).text().trim();
-                                const rate = this._cleanRate(rateText);
-                                
-                                if (rate !== null) {
-                                    rates[code] = {
-                                        currency: code,
-                                        name: key,
-                                        rate: rate,
-                                        symbol: this._getCurrencySymbol(code)
-                                    };
-                                }
-                            } catch (error) {
-                                // Continue to next currency
+
+                    // Optimized: Check directly for Dólar
+                    if (currencyText.includes('Dólar') || currencyText.includes('USD')) {
+                        try {
+                            const rateText = $(cells[1]).text().trim();
+                            // console.log(`Found USD rate text: ${rateText}`); // Debug
+                            const rate = this._cleanRate(rateText);
+
+                            if (rate !== null) {
+                                rates['USD'] = {
+                                    currency: 'USD',
+                                    name: 'Dólar',
+                                    rate: rate,
+                                    symbol: '$'
+                                };
+                                // Found USD, break completely
+                                return rates;
                             }
+                        } catch (error) {
+                            continue;
                         }
                     }
                 }
-            });
-        });
-
-        // If no rates found, add placeholder structure
-        if (Object.keys(rates).length === 0) {
-            for (const [name, code] of Object.entries(currencyMap)) {
-                rates[code] = {
-                    currency: code,
-                    name: name,
-                    rate: null,
-                    symbol: this._getCurrencySymbol(code),
-                    note: 'Rate not available - check BCV website'
-                };
             }
+        }
+
+        // If USD not found, add placeholder
+        if (!rates['USD']) {
+            rates['USD'] = {
+                currency: 'USD',
+                name: 'Dólar',
+                rate: null,
+                symbol: '$',
+                note: 'Rate not available - check BCV website'
+            };
         }
 
         return rates;
@@ -113,31 +139,17 @@ class BCVScraper {
      */
     _cleanRate(rateText) {
         try {
-            // Remove currency symbols, spaces, and convert comma to dot
+            // Remove known separators first
             let cleaned = rateText.replace(/,/g, '.').replace(/\s/g, '');
-            // Remove any non-numeric characters except dot and minus
+            // Strict cleanup
             cleaned = cleaned.replace(/[^\d.-]/g, '');
-            const rate = parseFloat(cleaned);
-            return isNaN(rate) ? null : rate;
+
+            if (!cleaned || isNaN(cleaned)) return null;
+
+            return parseFloat(cleaned);
         } catch (error) {
             return null;
         }
-    }
-
-    /**
-     * Get currency symbol for a given currency code
-     * @param {string} code - Currency code
-     * @returns {string} Currency symbol
-     */
-    _getCurrencySymbol(code) {
-        const symbols = {
-            'USD': '$',
-            'EUR': '€',
-            'CNY': '¥',
-            'TRY': '₺',
-            'RUB': '₽'
-        };
-        return symbols[code] || '';
     }
 }
 
