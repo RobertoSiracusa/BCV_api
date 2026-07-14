@@ -1,47 +1,94 @@
-# BCV API - Exchange Rates Web Scraper
+# BCV API - Web Scraper de Tasas de Cambio
 
-Open source API through web scraping to obtain exchange rates for American Dollars (USD $), Euros (€), Yuan (¥), Turkish Lira (₺), and Russian Ruble (₽) from the Venezuelan Central Bank (Banco Central de Venezuela - BCV).
+API de código abierto que obtiene, mediante web scraping, la tasa de cambio oficial del Dólar estadounidense (USD) publicada por el Banco Central de Venezuela (BCV) en https://www.bcv.org.ve/.
 
-Available in multiple programming languages:
-- 🐍 Python
-- 🟨 JavaScript (Node.js)
-- 🔷 TypeScript
-- 🐘 PHP
+El mismo scraper está implementado en cuatro lenguajes: Python, JavaScript (Node.js), TypeScript y PHP. Todas las implementaciones devuelven la misma estructura JSON.
 
-Returns data in **JSON format**.
+## Estado actual del proyecto
 
----
+Aunque el objetivo original contemplaba varias monedas (EUR, CNY, TRY, RUB), la implementación actual extrae únicamente la tasa del **USD (Dólar)**. El parser está optimizado con salida temprana: en cuanto encuentra la fila del Dólar deja de recorrer el HTML y devuelve el resultado. Ampliar a otras monedas requiere extender la función de parseo (`_parseRates` / `parseRates`).
 
-## 📋 Features
+## Cómo funciona
 
-- Web scraping of official BCV exchange rates
-- Support for 5 major currencies:
-  - USD (American Dollar) $
-  - EUR (Euro) €
-  - CNY (Yuan) ¥
-  - TRY (Turkish Lira) ₺
-  - RUB (Russian Ruble) ₽
-- JSON response format
-- Error handling
-- Multiple language implementations
+1. Se hace una petición HTTP GET a `https://www.bcv.org.ve/` con un `User-Agent` de navegador.
+2. Se descarga el HTML de la página principal (con compresión GZIP habilitada).
+3. Se parsea el HTML y se recorren todas las tablas (`<table>`) y sus filas (`<tr>`).
+4. En cada fila se compara la primera celda buscando el texto `Dólar`. Al encontrarlo, se toma la segunda celda como valor de la tasa.
+5. El valor se limpia (`cleanRate`): se reemplaza la coma decimal por punto, se eliminan espacios y cualquier carácter no numérico, y se convierte a número flotante. Si no es un número válido, devuelve `null`.
+6. Se construye un objeto JSON con `status`, `timestamp`, `source` y `rates`.
+7. Si el USD no se encuentra, se devuelve un registro `USD` con `rate: null` y una nota indicando que no está disponible.
 
----
+### Caché (JavaScript, TypeScript, PHP)
 
-## 🚀 Quick Start
+Las implementaciones en JS, TS y PHP incluyen caché en disco para no golpear el sitio del BCV en cada llamada:
+
+- Tiempo de vida (TTL): **1 hora**.
+- Archivos de caché:
+  - JavaScript: `bcv_rate_cache.json`
+  - TypeScript: `bcv_rate_cache_ts.json`
+  - PHP: `bcv_rate_cache.json`
+- Si la caché es reciente y válida, se devuelve directamente con el campo `cached: true`, sin hacer petición HTTP.
+- Si la petición al BCV falla pero existe una caché previa, se devuelve esa caché marcada con `cached: true` y `stale: true` (datos antiguos como respaldo).
+
+La implementación en **Python no tiene caché**: hace una petición en cada ejecución.
+
+### Nota sobre TLS
+
+- **PHP** valida el certificado TLS del BCV (`CURLOPT_SSL_VERIFYPEER = true`, `CURLOPT_SSL_VERIFYHOST = 2`).
+- **JavaScript** deshabilita la verificación TLS mediante `NODE_TLS_REJECT_UNAUTHORIZED = '0'`.
+- **TypeScript** deshabilita la verificación TLS mediante un `https.Agent` con `rejectUnauthorized: false`.
+
+La verificación se deshabilita en JS/TS porque el sitio del BCV suele presentar cadenas de certificados problemáticas. Tenlo en cuenta si lo usas en producción.
+
+## Estructura del proyecto
+
+```
+BCV_api/
+├── bcv_api.py            Implementación en Python (sin caché)
+├── bcv_api.js            Implementación en JavaScript / Node.js (con caché)
+├── src/bcv_api.ts        Implementación en TypeScript (con caché)
+├── bcv_api.php           Implementación en PHP (con caché, ejecutable por CLI o web)
+├── examples_curl.sh      Ejemplos de uso con cURL contra el servidor PHP
+├── requirements.txt      Dependencias de Python
+├── package.json          Dependencias y scripts de Node/TypeScript
+├── tsconfig.json         Configuración del compilador de TypeScript
+└── bcv_rate_cache*.json  Archivos de caché generados en tiempo de ejecución
+```
+
+## Requisitos
+
+### Python
+- Python 3.7+
+- `requests`, `beautifulsoup4`, `lxml` (ver `requirements.txt`)
+
+### JavaScript / TypeScript
+- Node.js 14+
+- `axios`, `cheerio`
+- Para TypeScript: `typescript`, `ts-node`, `@types/node` (dev dependencies)
+
+### PHP
+- PHP 7.4+
+- Extensión cURL
+- Extensión DOM (`DOMDocument`)
+
+## Instalación y uso
 
 ### Python
 
-#### Installation
+Instalar dependencias:
+
 ```bash
 pip install -r requirements.txt
 ```
 
-#### Usage
+Ejecutar directamente (imprime JSON por stdout):
+
 ```bash
 python bcv_api.py
 ```
 
-Or import as a module:
+Usar como módulo:
+
 ```python
 from bcv_api import BCVScraper
 
@@ -50,21 +97,24 @@ data = scraper.get_exchange_rates()
 print(data)
 ```
 
----
-
 ### JavaScript (Node.js)
 
-#### Installation
+Instalar dependencias:
+
 ```bash
 npm install
 ```
 
-#### Usage
+Ejecutar:
+
 ```bash
 node bcv_api.js
+# equivalente:
+npm start
 ```
 
-Or import as a module:
+Usar como módulo:
+
 ```javascript
 const BCVScraper = require('./bcv_api');
 
@@ -74,29 +124,30 @@ scraper.getExchangeRates().then(data => {
 });
 ```
 
----
-
 ### TypeScript
 
-#### Installation
+Instalar dependencias:
+
 ```bash
 npm install
-npm install --save-dev typescript ts-node @types/node
 ```
 
-#### Compile
-```bash
-tsc
-```
+Ejecutar sin compilar (con ts-node):
 
-#### Usage
 ```bash
 npm run start:ts
-# or after compilation:
+```
+
+Compilar a JavaScript (genera la carpeta `dist/`):
+
+```bash
+npm run build
+# luego:
 node dist/bcv_api.js
 ```
 
-Or import as a module:
+Usar como módulo:
+
 ```typescript
 import BCVScraper from './src/bcv_api';
 
@@ -106,59 +157,66 @@ scraper.getExchangeRates().then(data => {
 });
 ```
 
----
-
 ### PHP
 
-#### Usage
+Ejecutar por línea de comandos (imprime JSON):
+
 ```bash
 php bcv_api.php
 ```
 
-Or use in your PHP application:
+Servir como endpoint web con el servidor embebido de PHP:
+
+```bash
+php -S localhost:8000
+```
+
+Luego acceder a `http://localhost:8000/bcv_api.php`.
+
+Usar dentro de una aplicación PHP:
+
 ```php
 <?php
 require_once 'bcv_api.php';
 
 $scraper = new BCVScraper();
 $data = $scraper->getExchangeRates();
-echo json_encode($data, JSON_PRETTY_PRINT);
+echo json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 ?>
 ```
 
----
+### cURL (contra el endpoint PHP)
 
-### cURL
-
-If you deploy any of the implementations as a web service, you can access it using cURL:
+Con el servidor PHP corriendo (`php -S localhost:8000`):
 
 ```bash
-# If hosted locally with PHP
+# Obtener todo el JSON
 curl http://localhost:8000/bcv_api.php
 
-# If hosted on a server
-curl https://your-server.com/bcv_api.php
+# Formatear la salida con jq
+curl -s http://localhost:8000/bcv_api.php | jq '.'
 
-# With formatted output
-curl -s https://your-server.com/bcv_api.php | jq '.'
+# Obtener solo el bloque del USD
+curl -s http://localhost:8000/bcv_api.php | jq '.rates.USD'
+
+# Guardar la respuesta en un archivo
+curl -o rates.json http://localhost:8000/bcv_api.php
 ```
 
-**To run PHP as a web server locally:**
+El script `examples_curl.sh` imprime estos mismos ejemplos:
+
 ```bash
-php -S localhost:8000
+bash examples_curl.sh
 ```
 
-Then access: `http://localhost:8000/bcv_api.php`
+## Formato de respuesta JSON
 
----
+### Respuesta exitosa
 
-## 📊 JSON Response Format
-
-### Success Response
 ```json
 {
   "status": "success",
-  "timestamp": "2026-02-03T16:04:05.123Z",
+  "timestamp": "2026-02-05T18:40:35.277Z",
   "source": "BCV (Banco Central de Venezuela)",
   "rates": {
     "USD": {
@@ -166,110 +224,80 @@ Then access: `http://localhost:8000/bcv_api.php`
       "name": "Dólar",
       "rate": 36.5,
       "symbol": "$"
-    },
-    "EUR": {
-      "currency": "EUR",
-      "name": "Euro",
-      "rate": 39.8,
-      "symbol": "€"
-    },
-    "CNY": {
-      "currency": "CNY",
-      "name": "Yuan",
-      "rate": 5.2,
-      "symbol": "¥"
-    },
-    "TRY": {
-      "currency": "TRY",
-      "name": "Lira",
-      "rate": 1.2,
-      "symbol": "₺"
-    },
-    "RUB": {
-      "currency": "RUB",
-      "name": "Rublo",
-      "rate": 0.4,
-      "symbol": "₽"
     }
   }
 }
 ```
 
-### Error Response
+### Respuesta desde caché
+
+Igual que la exitosa, con campos adicionales (`cached` y, si son datos antiguos por fallo de red, `stale`):
+
+```json
+{
+  "status": "success",
+  "timestamp": "2026-02-05T18:40:35.277Z",
+  "source": "BCV (Banco Central de Venezuela)",
+  "rates": { "USD": { "currency": "USD", "name": "Dólar", "rate": 36.5, "symbol": "$" } },
+  "cached": true,
+  "stale": true
+}
+```
+
+### USD no disponible
+
+Cuando la página responde pero no se encuentra la fila del Dólar:
+
+```json
+{
+  "status": "success",
+  "timestamp": "2026-02-05T18:40:35.277Z",
+  "source": "BCV (Banco Central de Venezuela)",
+  "rates": {
+    "USD": {
+      "currency": "USD",
+      "name": "Dólar",
+      "rate": null,
+      "symbol": "$",
+      "note": "Rate not available - check BCV website"
+    }
+  }
+}
+```
+
+### Respuesta de error
+
+Cuando falla la petición HTTP y no hay caché para respaldo:
+
 ```json
 {
   "status": "error",
   "message": "Failed to fetch data from BCV: Connection timeout",
-  "timestamp": "2026-02-03T16:04:05.123Z"
+  "timestamp": "2026-02-05T18:40:35.277Z"
 }
 ```
 
----
+## API
 
-## 🔧 Requirements
+Todas las implementaciones exponen una clase `BCVScraper` con un método principal:
 
-### Python
-- Python 3.7+
-- requests
-- beautifulsoup4
-- lxml
+- **Python:** `get_exchange_rates()`
+- **JavaScript / TypeScript:** `getExchangeRates()` (asíncrono, devuelve una `Promise`)
+- **PHP:** `getExchangeRates()`
 
-### JavaScript/TypeScript
-- Node.js 14+
-- axios
-- cheerio
+Devuelve un objeto/array JSON con `status`, `timestamp`, `source` y `rates` en caso de éxito, o `status`, `message` y `timestamp` en caso de error.
 
-### PHP
-- PHP 7.4+
-- cURL extension
-- DOM extension
+## Consideraciones importantes
 
----
+1. **Depende del HTML del BCV.** Es web scraping: si el BCV cambia la estructura de su página, el parseo puede dejar de funcionar y habría que ajustarlo.
+2. **Uso responsable.** Evita peticiones excesivas al sitio del BCV. La caché (JS/TS/PHP) ayuda a reducir la carga.
+3. **Disponibilidad.** Los datos dependen de que el sitio del BCV esté accesible y actualizado.
+4. **Legal.** Asegúrate de cumplir los términos de servicio del BCV y la normativa local al usar esta API.
 
-## 📝 API Methods
+## Licencia
 
-All implementations provide a `BCVScraper` class with the following method:
+Proyecto bajo licencia MIT. Ver el archivo `LICENSE`.
 
-### `getExchangeRates()`
-Fetches and returns current exchange rates from BCV.
+## Enlaces
 
-**Returns:** 
-- JSON object with status, timestamp, source, and rates
-- On error: JSON object with status, message, and timestamp
-
----
-
-## ⚠️ Important Notes
-
-1. **Web Scraping**: This API relies on web scraping the BCV website. The structure of the website may change, which could affect the functionality.
-
-2. **Rate Limits**: Be respectful of the BCV website and avoid excessive requests. Consider implementing caching for production use.
-
-3. **Availability**: Exchange rates depend on the BCV website being accessible and up-to-date.
-
-4. **Legal**: Ensure you comply with BCV's terms of service and local regulations when using this API.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
----
-
-## 🔗 Links
-
-- BCV Website: https://www.bcv.org.ve/
-- Currency symbols: $ (USD), € (EUR), ¥ (CNY), ₺ (TRY), ₽ (RUB)
-
----
-
-## 📞 Support
-
-For issues, questions, or contributions, please open an issue on the GitHub repository.
+- Sitio del BCV: https://www.bcv.org.ve/
